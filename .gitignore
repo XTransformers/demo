@@ -23,3 +23,9 @@
 hs_err_pid*
 
 .DS_Store
+
+.idea
+.mvn
+target
+
+mvnw*
