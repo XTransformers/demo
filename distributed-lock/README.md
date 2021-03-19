@@ -54,7 +54,58 @@ CREATE TABLE `user_reg` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='用户注册信息表';
 ```
 
+### 1.基于 Redis 实现
+
+核心：
+
+- 精心设计构造一个跟共享资源或核心业务相关的 key
+- 调用 SETNX 和 EXPIRE 操作加锁
+- 调用 DEL 操作释放锁
+
 是否使用分布式锁，在 UserRegController 有 2 个接口（”/user/reg/submit“ 和 ”/user/reg/submit-withlock”），对应到底层是 UserRegService 中的 userRegNoLock 和 userRegWithLock 方法。
 
 使用 JMeter 高并发测试，配置详见”高并发测试-基于Redis.jmx“。
+
+
+
+### 2.基于 Zookeeper 实现
+
+基于 ZK 的临时节点和 Watcher 机制实现的分布式锁。
+
+在 ZK 中，数据模型中的数据单元，称之为数据节点，即 ZNode。
+
+- 持久节点
+  - 一旦这个 ZNode 被创建了，除非主动移除，否则会一致保存在 ZK 上。
+- 临时节点
+  - 生命周期和客户端的会话绑定在一起的，一旦客户端会话失效，那么这个客户端创建的所有临时节点都会被移除。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

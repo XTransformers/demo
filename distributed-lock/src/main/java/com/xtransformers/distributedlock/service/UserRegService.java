@@ -4,6 +4,8 @@ import com.xtransformers.distributedlock.dao.UserRegMapper;
 import com.xtransformers.distributedlock.dto.UserRegDto;
 import com.xtransformers.distributedlock.entity.UserReg;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.curator.framework.CuratorFramework;
+import org.apache.curator.framework.recipes.locks.InterProcessMutex;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -23,6 +25,9 @@ public class UserRegService {
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    private CuratorFramework curatorFramework;
 
     /**
      * 处理用户提交注册的请求
@@ -57,7 +62,7 @@ public class UserRegService {
      *
      * @param dto * @throws Exception
      */
-    public void userRegWithLock(UserRegDto dto) throws Exception {
+    public void userRegWithRedisLock(UserRegDto dto) throws Exception {
         //精心设计并构造SETNX操作中的Key，一定要跟实际的业务或共享资源挂钩
         final String key = dto.getUserName() + "-lock";
         //设计Key对应的Value，为了具有随机性
@@ -77,7 +82,7 @@ public class UserRegService {
                 UserReg reg = userRegMapper.selectByUserName(dto.getUserName());
                 //如果当前用户名还未被注册，则将当前的用户信息注册入数据库中
                 if (reg == null) {
-                    log.info("---加了分布式锁 ---,当前用户名为： {} ", dto.getUserName());
+                    log.info("---加了 Redis 分布式锁 ---,当前用户名为： {} ", dto.getUserName());
                     //创建用户注册实体信息
                     UserReg entity = new UserReg();
                     //将提交的用户注册请求实体信息中对应的字段取值
@@ -100,8 +105,43 @@ public class UserRegService {
                 }
             }
         } else {
-            throw new Exception("can not get the distributed lock.");
+            throw new Exception("can not get the Redis distributed lock.");
         }
     }
 
+    //ZooKeeper分布式锁的实现原理是由ZNode节点的创建与删除跟监听机制构成的
+    //而ZNoe节点将对应一个具体的路径-跟Unix文件夹路径类似，需要以 / 开头
+    private static final String pathPrefix = "/middleware/zkLock/";
+    private static final String pathSuffix = "-lock";
+
+    /**
+     * 处理用户提交注册的请求-加ZooKeeper分布式锁
+     *
+     * @param dto
+     * @throws Exception
+     */
+    public void userRegWithZKLock(UserRegDto dto) throws Exception {
+        // 创建 ZK 互斥锁组件实例，需要将监控用的客户端实例、精心构造的共享资源作为构造参数
+        InterProcessMutex mutex = new InterProcessMutex(curatorFramework, pathPrefix + dto.getUserName() + pathSuffix);
+        try {
+            // 尝试获取互斥锁，等待最大时间为 10s
+            if (mutex.acquire(1L, TimeUnit.SECONDS)) {
+                UserReg reg = userRegMapper.selectByUserName(dto.getUserName());
+                if (reg == null) {
+                    log.info("---加了 ZK 分布式锁 ---,当前用户名为：{} ", dto.getUserName());
+                    UserReg entity = new UserReg();
+                    BeanUtils.copyProperties(dto, entity);
+                    entity.setCreateTime(new Date());
+                    userRegMapper.insertSelective(entity);
+                } else {
+                    //如果用户名已被注册，则抛出异常
+                    throw new Exception("user info already exists.");
+                }
+            } else {
+                throw new Exception("can not get the ZK distributed lock.");
+            }
+        } finally {
+            mutex.release();
+        }
+    }
 }
